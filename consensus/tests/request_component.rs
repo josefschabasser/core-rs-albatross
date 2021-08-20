@@ -2,64 +2,15 @@ use std::{sync::Arc, time::Duration};
 
 use beserial::Deserialize;
 use nimiq_block_production::BlockProducer;
-use nimiq_blockchain::{AbstractBlockchain, Blockchain};
+use nimiq_blockchain::AbstractBlockchain;
 use nimiq_bls::{KeyPair, SecretKey};
-use nimiq_consensus::sync::history::HistorySync;
-use nimiq_consensus::Consensus;
-use nimiq_database::volatile::VolatileEnvironment;
-use nimiq_mempool::{Mempool, MempoolConfig};
-use nimiq_network_interface::network::Network;
-use nimiq_network_mock::{MockHub, MockNetwork};
-use nimiq_primitives::networks::NetworkId;
+use nimiq_network_mock::MockHub;
 use nimiq_test_utils::blockchain::produce_macro_blocks;
+use nimiq_test_utils::node::Node;
 
 /// Secret key of validator. Tests run with `network-primitives/src/genesis/unit-albatross.toml`
 const SECRET_KEY: &str =
     "196ffdb1a8acc7cbd76a251aeac0600a1d68b3aba1eba823b5e4dc5dbdcdc730afa752c05ab4f6ef8518384ad514f403c5a088a22b17bf1bc14f8ff8decc2a512c0a200f68d7bdf5a319b30356fe8d1d75ef510aed7a8660968c216c328a0000";
-
-struct Node {
-    network: Arc<MockNetwork>,
-    blockchain: Arc<Blockchain>,
-    mempool: Arc<Mempool>,
-    consensus: Option<Consensus<MockNetwork>>,
-}
-
-impl Node {
-    pub async fn new(hub: &mut MockHub) -> Self {
-        let env = VolatileEnvironment::new(10).unwrap();
-
-        let blockchain = Arc::new(Blockchain::new(env.clone(), NetworkId::UnitAlbatross).unwrap());
-
-        let network = Arc::new(hub.new_network());
-
-        let history_sync =
-            HistorySync::<MockNetwork>::new(Arc::clone(&blockchain), network.subscribe_events());
-
-        let mempool = Mempool::new(Arc::clone(&blockchain), MempoolConfig::default());
-
-        let consensus = Consensus::from_network(
-            env,
-            Arc::clone(&blockchain),
-            Arc::clone(&mempool),
-            Arc::clone(&network),
-            Box::pin(history_sync),
-        )
-        .await;
-
-        Node {
-            network,
-            blockchain,
-            mempool,
-            consensus: Some(consensus),
-        }
-    }
-
-    pub fn consume(&mut self) {
-        if let Some(consensus) = self.consensus.take() {
-            tokio::spawn(consensus);
-        }
-    }
-}
 
 #[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
