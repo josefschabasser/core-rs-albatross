@@ -77,7 +77,7 @@ async fn consensus(peer_id: u64, genesis_info: GenesisInfo) -> Consensus {
     .await
 }
 
-async fn validator(
+async fn create_validator(
     peer_id: u64,
     signing_key: KeyPair,
     genesis_info: GenesisInfo,
@@ -90,7 +90,7 @@ async fn validator(
     )
 }
 
-async fn validators(num_validators: usize) -> Vec<Validator> {
+async fn create_validators(num_validators: usize) -> Vec<Validator> {
     // Generate validator key pairs.
     let mut rng = seeded_rng(0);
     let keys: Vec<KeyPair> = (0..num_validators)
@@ -113,7 +113,7 @@ async fn validators(num_validators: usize) -> Vec<Validator> {
     let mut validators = vec![];
     let mut consensus = vec![];
     for (id, key) in keys.into_iter().enumerate() {
-        let (v, c) = validator((id + 1) as u64, key, genesis.clone()).await;
+        let (v, c) = create_validator((id + 1) as u64, key, genesis.clone()).await;
         log::info!(
             "Validator #{}: {}",
             v.validator_id(),
@@ -154,7 +154,7 @@ async fn four_validators_can_create_an_epoch() {
         .init()
         .ok();
 
-    let validators = validators(4).await;
+    let validators = create_validators(4).await;
 
     let blockchain = Arc::clone(&validators.first().unwrap().consensus.blockchain);
 

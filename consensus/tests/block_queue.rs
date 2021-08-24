@@ -22,7 +22,7 @@ use nimiq_bls::{KeyPair, SecretKey};
 use nimiq_consensus::consensus_agent::ConsensusAgent;
 use nimiq_consensus::sync::block_queue::BlockQueueConfig;
 use nimiq_consensus::sync::request_component::RequestComponentEvent;
-use nimiq_consensus::sync::{block_queue::BlockQueue, request_component::RequestComponent};
+use nimiq_consensus::sync::{block_queue::BlockQueue, block_queue::BlockQueueEvent, request_component::RequestComponent};
 use nimiq_database::volatile::VolatileEnvironment;
 use nimiq_hash::Blake2bHash;
 use nimiq_mempool::{Mempool, MempoolConfig};
@@ -133,16 +133,40 @@ async fn send_single_micro_block_to_block_queue() {
     let block =
         Block::Micro(producer.next_micro_block(blockchain.time.now(), 0, None, vec![], vec![0x42]));
     let mock_id = MockId::new(hub.new_address().into());
-    tx.send((block, mock_id)).await.unwrap();
+    tx.send((block, mock_id.clone())).await.unwrap();
 
     assert_eq!(blockchain.block_number(), 0);
 
     // run the block_queue one iteration, i.e. until it processed one block
-    block_queue.next().await;
+    let block_queue_event = block_queue.next().await;
 
+    if let Some(event) = block_queue_event{
+
+        match event {
+
+            BlockQueueEvent::AcceptedAnnouncedBlock(hash) => println!("Accepted Block, {} ", hash),
+            BlockQueueEvent::AcceptedBufferedBlock(hash, size) => println!("Buffered Block {} , {} ", hash, size),
+            _ => println!("Other case"),
+        }
+    }
+    
     // The produced block is without gap and should go right into the blockchain
     assert_eq!(blockchain.block_number(), 1);
     assert!(block_queue.buffered_blocks().next().is_none());
+
+    //Push another block into the block queue
+    let block = Block::Micro(producer.next_micro_block(blockchain.time.now(), 0, None, vec![], vec![0x69]));
+    tx.send((block, mock_id.clone())).await.unwrap();
+
+    //The block has not been roduced yet
+    assert_eq!(blockchain.block_number(), 1);
+
+    // run the block_queue one more
+    block_queue.next().await;
+
+    assert_eq!(blockchain.block_number(), 2);
+
+
 }
 
 #[tokio::test]
@@ -185,20 +209,33 @@ async fn send_two_micro_blocks_out_of_order() {
         vec![0x42],
     ));
 
+    blockchain2.push(block2.clone()).unwrap(); // push one more block
+
+    let block3 = Block::Micro(producer.next_micro_block
+        (blockchain2.time.now(), 
+        0, None, vec![], vec![0x69]));
+
+
     let mock_id = MockId::new(hub.new_address().into());
 
     // send block2 first
     tx.send((block2.clone(), mock_id.clone())).await.unwrap();
 
+    // now send block 3
+    tx.send((block3.clone(), mock_id.clone())).await.unwrap();
+
+    // Blocks should be queued, so the block number should be still 0
     assert_eq!(blockchain1.block_number(), 0);
 
     // run the block_queue one iteration, i.e. until it processed one block
     block_queue.poll_next_unpin(&mut Context::from_waker(noop_waker_ref()));
 
-    // this block should be buffered now
+    block_queue.poll_next_unpin(&mut Context::from_waker(noop_waker_ref()));
+
+    // these blocks should be buffered now
     assert_eq!(blockchain1.block_number(), 0);
     let blocks = block_queue.buffered_blocks().collect::<Vec<_>>();
-    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks.len(), 2);
     let (block_number, blocks) = blocks.get(0).unwrap();
     assert_eq!(*block_number, 2);
     assert_eq!(blocks[0], &block2);
@@ -213,12 +250,14 @@ async fn send_two_micro_blocks_out_of_order() {
     // run the block_queue until is has produced two events.
     block_queue.next().await;
     block_queue.next().await;
+    block_queue.next().await;
 
     // now both blocks should've been pushed to the blockchain
-    assert_eq!(blockchain1.block_number(), 2);
+    assert_eq!(blockchain1.block_number(), 3);
     assert!(block_queue.buffered_blocks().next().is_none());
     assert_eq!(blockchain1.get_block_at(1, true, None).unwrap(), block1);
     assert_eq!(blockchain1.get_block_at(2, true, None).unwrap(), block2);
+    assert_eq!(blockchain1.get_block_at(3, true, None).unwrap(), block3);
 }
 
 #[tokio::test]
