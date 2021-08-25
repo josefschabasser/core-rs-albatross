@@ -4,9 +4,14 @@ use beserial::Deserialize;
 use nimiq_block_production::BlockProducer;
 use nimiq_blockchain::AbstractBlockchain;
 use nimiq_bls::{KeyPair, SecretKey};
-use nimiq_network_mock::MockHub;
+use nimiq_build_tools::genesis::GenesisBuilder;
+use nimiq_keys::{Address, SecureGenerate};
+use nimiq_network_mock::{MockHub, MockNetwork};
+use nimiq_primitives::account::ValidatorId;
+use nimiq_primitives::coin::Coin;
 use nimiq_test_utils::blockchain::produce_macro_blocks;
 use nimiq_test_utils::node::Node;
+use nimiq_test_utils::validator::seeded_rng;
 
 /// Secret key of validator. Tests run with `network-primitives/src/genesis/unit-albatross.toml`
 const SECRET_KEY: &str =
@@ -17,10 +22,23 @@ const SECRET_KEY: &str =
 async fn test_request_component() {
     //simple_logger::init_by_env();
 
-    let mut hub = MockHub::default();
+    let mut hub = Some(MockHub::default());
 
-    let mut node1 = Node::new(&mut hub).await;
-    let mut node2 = Node::new(&mut hub).await;
+    // Generate genesis block.
+    let key = KeyPair::generate(&mut seeded_rng(0));
+
+    let genesis = GenesisBuilder::default()
+        .with_genesis_validator(
+            ValidatorId::default(),
+            key.public_key,
+            Address::default(),
+            Coin::from_u64_unchecked(10000),
+        )
+        .generate()
+        .unwrap();
+
+    let mut node1 = Node::<MockNetwork>::new(1, genesis.clone(), &mut hub).await;
+    let mut node2 = Node::<MockNetwork>::new(2, genesis.clone(), &mut hub).await;
 
     let keypair1 =
         KeyPair::from(SecretKey::deserialize_from_vec(&hex::decode(SECRET_KEY).unwrap()).unwrap());

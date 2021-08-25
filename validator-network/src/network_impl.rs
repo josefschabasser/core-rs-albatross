@@ -86,7 +86,7 @@ pub struct State<TPeerId> {
 pub struct ValidatorNetworkImpl<N>
 where
     N: Network,
-    <<N as Network>::PeerType as Peer>::Id: Send + Sync + Serialize + Deserialize,
+    <N::PeerType as Peer>::Id: Send + Sync + Serialize + Deserialize,
 {
     network: Arc<N>,
     state: Mutex<State<PeerId<N>>>,
