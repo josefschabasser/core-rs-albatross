@@ -213,8 +213,11 @@ async fn send_two_micro_blocks_out_of_order() {
 
     let block3 = Block::Micro(producer.next_micro_block
         (blockchain2.time.now(), 
-        0, None, vec![], vec![0x69]));
-
+        0, 
+        None, 
+        vec![], 
+        vec![0x69])
+    );
 
     let mock_id = MockId::new(hub.new_address().into());
 
@@ -234,11 +237,25 @@ async fn send_two_micro_blocks_out_of_order() {
 
     // these blocks should be buffered now
     assert_eq!(blockchain1.block_number(), 0);
-    let blocks = block_queue.buffered_blocks().collect::<Vec<_>>();
-    assert_eq!(blocks.len(), 2);
-    let (block_number, blocks) = blocks.get(0).unwrap();
+
+    //Now we obtain the buffered blocks
+    let buffered_blocks = block_queue.buffered_blocks().collect::<Vec<_>>();
+
+    println!("Buffered blocks: {}", buffered_blocks.len());
+
+    assert_eq!(buffered_blocks.len(), 2);
+
+    //Obtain the first buffered block
+    let (block_number, blocks) = buffered_blocks.get(0).unwrap();
+
+    // The first buffered block should be block 2, since thats the one we sent first
     assert_eq!(*block_number, 2);
     assert_eq!(blocks[0], &block2);
+
+    let (block_number, blocks) = buffered_blocks.get(1).unwrap();
+    // The second buffered block should be block 3
+    assert_eq!(*block_number, 3);
+    assert_eq!(blocks[0], &block3);
 
     // Also we should've received a request to fill this gap
     let (target_block_hash, _locators) = mock_ptarc_rx.next().await.unwrap();
@@ -248,6 +265,211 @@ async fn send_two_micro_blocks_out_of_order() {
     tx.send((block1.clone(), mock_id)).await.unwrap();
 
     // run the block_queue until is has produced two events.
+    block_queue.next().await;
+    block_queue.next().await;
+    block_queue.next().await;
+
+    // now both blocks should've been pushed to the blockchain
+    assert_eq!(blockchain1.block_number(), 3);
+    assert!(block_queue.buffered_blocks().next().is_none());
+    assert_eq!(blockchain1.get_block_at(1, true, None).unwrap(), block1);
+    assert_eq!(blockchain1.get_block_at(2, true, None).unwrap(), block2);
+    assert_eq!(blockchain1.get_block_at(3, true, None).unwrap(), block3);
+}
+
+
+#[tokio::test]
+async fn send_three_micro_blocks_out_of_order() {
+    let keypair =
+        KeyPair::from(SecretKey::deserialize_from_vec(&hex::decode(SECRET_KEY).unwrap()).unwrap());
+    let env1 = VolatileEnvironment::new(10).unwrap();
+    let env2 = VolatileEnvironment::new(10).unwrap();
+    let blockchain1 = Arc::new(Blockchain::new(env1, NetworkId::UnitAlbatross).unwrap());
+    let blockchain2 = Arc::new(Blockchain::new(env2, NetworkId::UnitAlbatross).unwrap());
+    let mut hub = MockHub::new();
+    let network = Arc::new(hub.new_network());
+    let mempool = Mempool::new(Arc::clone(&blockchain2), MempoolConfig::default());
+    let producer = BlockProducer::new(Arc::clone(&blockchain2), Arc::clone(&mempool), keypair);
+    let (request_component, mut mock_ptarc_rx, _mock_ptarc_tx) =
+        MockRequestComponent::<MockPeer>::new();
+    let (mut tx, rx) = mpsc::channel(32);
+
+    let mut block_queue = BlockQueue::with_block_stream(
+        Default::default(),
+        Arc::clone(&blockchain1),
+        network,
+        request_component,
+        rx.boxed(),
+    );
+
+    let block1 = Block::Micro(producer.next_micro_block(
+        blockchain2.time.now(),
+        0,
+        None,
+        vec![],
+        vec![0x42],
+    ));
+    blockchain2.push(block1.clone()).unwrap(); // push it, so the producer actually produces a block at height 2
+    let block2 = Block::Micro(producer.next_micro_block(
+        blockchain2.time.now() + 1000,
+        0,
+        None,
+        vec![],
+        vec![0x42],
+    ));
+
+    blockchain2.push(block2.clone()).unwrap(); // push one more block
+
+    let block3 = Block::Micro(producer.next_micro_block
+        (blockchain2.time.now(), 
+        0, 
+        None, 
+        vec![], 
+        vec![0x69])
+    );
+
+
+    let mock_id = MockId::new(hub.new_address().into());
+
+    // send block3 first
+    tx.send((block3.clone(), mock_id.clone())).await.unwrap();
+
+    // Blocks should be queued, so the block number should be still 0
+    assert_eq!(blockchain1.block_number(), 0);
+
+    // run the block_queue one iteration, i.e. until it processed one block
+    block_queue.poll_next_unpin(&mut Context::from_waker(noop_waker_ref()));
+
+    // these blocks should be buffered now
+    assert_eq!(blockchain1.block_number(), 0);
+
+    //Now we obtain the buffered blocks
+    let buffered_blocks = block_queue.buffered_blocks().collect::<Vec<_>>();
+
+    println!("Buffered blocks: {}", buffered_blocks.len());
+
+    assert_eq!(buffered_blocks.len(), 1);
+
+    //Obtain the first buffered block
+    let (block_number, blocks) = buffered_blocks.get(0).unwrap();
+
+    // The first buffered block should be block 3, since thats the one we sent first
+    assert_eq!(*block_number, 3);
+    assert_eq!(blocks[0], &block3);
+  
+    // Also we should've received a request to fill this gap
+    let (target_block_hash, _locators) = mock_ptarc_rx.next().await.unwrap();
+    assert_eq!(target_block_hash, block3.hash());
+
+    // now send block1 to fill the gap
+    tx.send((block1.clone(), mock_id.clone())).await.unwrap();
+       
+    // now send block 2
+    tx.send((block2.clone(), mock_id.clone())).await.unwrap();
+
+    // run the block_queue until is has produced three events.
+    block_queue.next().await;
+    block_queue.next().await;
+    block_queue.next().await;
+
+    // now both blocks should've been pushed to the blockchain
+    assert_eq!(blockchain1.block_number(), 3);
+    assert!(block_queue.buffered_blocks().next().is_none());
+    assert_eq!(blockchain1.get_block_at(1, true, None).unwrap(), block1);
+    assert_eq!(blockchain1.get_block_at(2, true, None).unwrap(), block2);
+    assert_eq!(blockchain1.get_block_at(3, true, None).unwrap(), block3);
+}
+
+#[tokio::test]
+async fn send_three_micro_blocks_out_of_order_b() {
+    let keypair =
+        KeyPair::from(SecretKey::deserialize_from_vec(&hex::decode(SECRET_KEY).unwrap()).unwrap());
+    let env1 = VolatileEnvironment::new(10).unwrap();
+    let env2 = VolatileEnvironment::new(10).unwrap();
+    let blockchain1 = Arc::new(Blockchain::new(env1, NetworkId::UnitAlbatross).unwrap());
+    let blockchain2 = Arc::new(Blockchain::new(env2, NetworkId::UnitAlbatross).unwrap());
+    let mut hub = MockHub::new();
+    let network = Arc::new(hub.new_network());
+    let mempool = Mempool::new(Arc::clone(&blockchain2), MempoolConfig::default());
+    let producer = BlockProducer::new(Arc::clone(&blockchain2), Arc::clone(&mempool), keypair);
+    let (request_component, mut mock_ptarc_rx, _mock_ptarc_tx) =
+        MockRequestComponent::<MockPeer>::new();
+    let (mut tx, rx) = mpsc::channel(32);
+
+    let mut block_queue = BlockQueue::with_block_stream(
+        Default::default(),
+        Arc::clone(&blockchain1),
+        network,
+        request_component,
+        rx.boxed(),
+    );
+
+    let block1 = Block::Micro(producer.next_micro_block(
+        blockchain2.time.now(),
+        0,
+        None,
+        vec![],
+        vec![0x42],
+    ));
+    blockchain2.push(block1.clone()).unwrap(); // push it, so the producer actually produces a block at height 2
+    let block2 = Block::Micro(producer.next_micro_block(
+        blockchain2.time.now() + 1000,
+        0,
+        None,
+        vec![],
+        vec![0x42],
+    ));
+
+    blockchain2.push(block2.clone()).unwrap(); // push one more block
+
+    let block3 = Block::Micro(producer.next_micro_block
+        (blockchain2.time.now(), 
+        0, 
+        None, 
+        vec![], 
+        vec![0x69])
+    );
+
+
+    let mock_id = MockId::new(hub.new_address().into());
+
+    // send block3 first
+    tx.send((block3.clone(), mock_id.clone())).await.unwrap();
+
+    // Blocks should be queued, so the block number should be still 0
+    assert_eq!(blockchain1.block_number(), 0);
+
+    // run the block_queue one iteration, i.e. until it processed one block
+    block_queue.poll_next_unpin(&mut Context::from_waker(noop_waker_ref()));
+
+    // these blocks should be buffered now
+    assert_eq!(blockchain1.block_number(), 0);
+
+    //Now we obtain the buffered blocks
+    let buffered_blocks = block_queue.buffered_blocks().collect::<Vec<_>>();
+
+    println!("Buffered blocks: {}", buffered_blocks.len());
+
+    assert_eq!(buffered_blocks.len(), 1);
+
+    //Obtain the first buffered block
+    let (block_number, blocks) = buffered_blocks.get(0).unwrap();
+
+    // The first buffered block should be block 2, since thats the one we sent first
+    assert_eq!(*block_number, 3);
+    assert_eq!(blocks[0], &block3);
+  
+    // Also we should've received a request to fill this gap
+    let (target_block_hash, _locators) = mock_ptarc_rx.next().await.unwrap();
+    assert_eq!(target_block_hash, block3.hash());
+
+    // now send block1 to fill the gap
+    tx.send((block2.clone(), mock_id.clone())).await.unwrap();
+       
+    // now send block 2
+    tx.send((block1.clone(), mock_id.clone())).await.unwrap();
+
+    // run the block_queue until is has produced three events.
     block_queue.next().await;
     block_queue.next().await;
     block_queue.next().await;
