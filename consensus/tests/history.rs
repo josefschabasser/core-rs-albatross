@@ -44,7 +44,7 @@ const SECRET_KEY: &str =
 
 #[tokio::test]
 async fn peers_can_sync() {
-    // SimpleLogger::new().init().unwrap();
+    simple_logger::SimpleLogger::new().init().unwrap();
 
     let mut hub = MockHub::default();
 
@@ -183,6 +183,7 @@ async fn peers_can_sync() {
 
 #[tokio::test]
 async fn sync_ingredients() {
+    simple_logger::SimpleLogger::new().init().unwrap();
     let mut hub = MockHub::default();
 
     // Setup first peer.
@@ -264,6 +265,7 @@ async fn sync_ingredients() {
         .await
         .expect("Should yield epoch");
     assert_eq!(epoch.history_len, 3);
+    log::error!("History: {:?}", epoch);
     assert_eq!(
         epoch.block.expect("Should have block").hash(),
         consensus1.blockchain.election_head_hash()
@@ -274,6 +276,7 @@ async fn sync_ingredients() {
         .await
         .expect("Should yield epoch");
     assert_eq!(epoch.history_len, 1);
+    log::error!("History: {:?}", epoch);
     assert_eq!(
         epoch.block.expect("Should have block").hash(),
         consensus1.blockchain.macro_head_hash()
@@ -287,6 +290,7 @@ async fn sync_ingredients() {
         .chunk
         .expect("Should yield history chunk");
     assert_eq!(chunk.history.len(), 3);
+    log::error!("Chunk: {:?}", chunk);
     assert_eq!(
         chunk.verify(consensus1.blockchain.election_head().header.history_root, 0),
         Some(true)
@@ -299,6 +303,7 @@ async fn sync_ingredients() {
         .chunk
         .expect("Should yield history chunk");
     assert_eq!(chunk.history.len(), 1);
+    log::error!("Chunk: {:?}", chunk);
     assert_eq!(
         chunk.verify(consensus1.blockchain.macro_head().header.history_root, 0),
         Some(true)
